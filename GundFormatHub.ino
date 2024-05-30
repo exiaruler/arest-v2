@@ -39,6 +39,7 @@ String warning="";
 String devices="";
 String queryData="";
 boolean backgroundRunning;
+
 // global methods 
 String servoMove(Servo servo,int pin,int start,int move,int gap,int between,int loop){
   
@@ -77,7 +78,8 @@ void setColour(int R,int pinR, int G,int pinG, int B,int pinB) {
   analogWrite(pinG,G);
   analogWrite(pinB,B);
 }
-void setColourCommonAn(int R,int pinR, int G,int pinG, int B,int pinB){
+void setColourCommonAn(int R,int pinR, int G,int pinG, int B,int pinB,int postivePin,int current=255){
+  analogWrite(postivePin,255);
   RGBLed led(pinR,pinG,pinB, RGBLed::COMMON_ANODE);
   led.setColor(R, G, B);
 }
@@ -113,9 +115,24 @@ backgroundTask task={};
 // add task
 int addTask(String device,String method,int pin,boolean rgb,int rgbPins [],int interval){
   int index=0;
-  backgroundTask task={device,method,pin,rgb,interval,rgbPins[0],rgbPins[1],rgbPins[2]};
-  queue.add(task);
-  index=queue.size()-1;
+  boolean exist=false;
+  for(int i=0; i<queue.size(); i++){
+    backgroundTask t=queue[i];
+    if(t.device==device&&t.method==method&&t.interval==interval&&t.pin==pin&&t.rgb==rgb&&t.rgbRed==rgbPins[0]&&t.rgbGreen==rgbPins[1]&&t.rgbBlue==rgbPins[2]){
+      exist=true;
+      break;
+    }
+  }
+  if(!exist){
+    backgroundTask task={device,method,pin,rgb,interval,rgbPins[0],rgbPins[1],rgbPins[2]};
+    queue.add(task);
+    index=queue.size()-1;
+  }
+  return index;
+}
+// for command base
+int addTaskManual(String device,String method,int pin,boolean rgb,int rgbR,int rgbB,int rgbG,int interval){
+  int index=0;
   return index;
 }
 // remove device from queue
@@ -259,6 +276,7 @@ struct component{
   boolean motor=false;
   boolean pinmodeOut=false;
   boolean pinmodeIn=false;
+  //Servo servo;
   boolean active=false;
   String status="";
 };
@@ -277,19 +295,203 @@ struct deviceS{
 // current device which is set when setting modes
 deviceS deviceSet={};
 int deviceArrIndex=0;
+// check route can be use for that device. validate command for that route if there multiple modes
+boolean validateRoute(String routeS,String param=""){
+  boolean res=false;
+  int length = sizeof(deviceSet.routesArr) / sizeof(deviceSet.routesArr[0]);
+  for(int i=0; i<length; i++){
+    route rou=deviceSet.routesArr[i];
+    if(routeS.equals(rou.routeName)){
+      // if there modes loop through to validate
+      if(rou.modes){
+        boolean end=false;
+        int modesLen=sizeof(rou.params) / sizeof(rou.params[0]);
+        for(int a=0; a<modesLen; a++){
+          String mode=rou.params[a];
+          if(param==mode){
+            break;
+          }
+          if(mode==""){
+            end =true;
+            break;
+          }
+        }
+        if(end){
+          warning="invalid param";
+          deviceSet.warning=warning;
+          break;
+        }
+      }
+
+      res=true;
+      break;
+    }
+    if(rou.routeName.equals("")){
+      break;
+    }
+  }
+  return res;
+}
 // devices
 int ledPin=D2;
-
-int setMain(String command);
-int randPermet(String commmand);
-int setPermet(String score);
+String commandSep="|~||";
 deviceS deviceArr[]={{
   "Aerial","","","","",{{"Main",D4,false,true,{},false,true},{"Shelll Unit",D8,true,false,{D1,D2,D3},false,true}},"WFM","Gundam",
   {{"randPermet",false},
-  {"setPermet",true,{"0","1","2","3","4","5","6","7","8","9","10"}},{"setMain",true,{"On","Off"}}}
+  {"setPermet",true,{"0","1","2","3","4","5","6","7","8","9","10"}},
+  {"setMain",true,{"On","Off"}}}
 },
 {"Build Strike EG","","","",""}};
 
+int setMain(String command){
+  int r=0;
+  warning="";
+  if(validateRoute("setMain",command)){
+    
+  }else{
+    deviceSet.warning=="device does not have this function";
+  }
+  return r;
+}
+// customRGB
+void customRGB(String param){
+  
+}
+// aerial route
+int randPermet(String command){
+  warning="";
+  int r=0;
+  if(validateRoute("randPermet")){
+    if(turnOnShellRandom()){
+      int score=permetScoreRandom();
+      if(deviceSet.status!=""&&deviceSet.status!="off"){
+        score=random(deviceSet.status.toInt(),11);
+      }
+      deviceSet.status=setPermetScore(score);
+    }else{
+      setPermetScore(0);
+      deviceSet.status="off";
+    }
+    r=1;
+  }else{
+    deviceSet.warning="device does not have this function";
+  }
+  
+  deviceSet.warning=warning;
+  return r;
+}
+// aerial route
+int setPermet(String score){
+  warning="";
+  int r=0;
+  if(validateRoute("setPermet",score)){
+    if(score!=""){
+      int convertedScore=score.toInt();
+      String setPermet=setPermetScore(convertedScore);
+      deviceSet.status=setPermet;
+      deviceSet.warning=warning;
+      r=1;
+    }else{
+      warning="score entered not valid";
+      deviceSet.warning=warning;
+    }
+  }else{
+    //warning="device does not have this function";
+  }
+  return r;
+}
+
+boolean turnOnShellRandom(){
+  boolean res=false;
+  int ranDom;
+  ranDom = random(1,3);
+  if(ranDom==2){
+    res=true;
+  }
+  return res;
+}
+int permetScoreRandom(){
+  int score;
+  score=random(1,11);
+  return score;
+}
+String setPermetScore(int permet){
+  String score="";
+  // get component that has rgb pins
+  int length = sizeof(deviceSet.components) / sizeof(deviceSet.components[0]);
+  // clear any exist task
+  if(queue.size()>0){
+    removeDeviceTask(deviceSet.name);
+    Serial.println("tasks clear");
+  }
+  for(int i=0; i<length; i++){
+    component comp=deviceSet.components[i];
+    if(comp.rgb){
+      int rPin=comp.rgbPins[0],gPin=comp.rgbPins[1],bPin=comp.rgbPins[2];
+      
+      if(permet==0){
+        analogWrite(comp.pin,0);
+        setColour(255,rPin,255,gPin,255,bPin);
+        score="off";
+        comp.active=false;
+        comp.status="";
+      }
+      if(permet==1){
+        score="1";
+        int pins []={rPin,0,0};
+        setColour(100,rPin,255,gPin,255,bPin);
+        addTask(deviceSet.name,"ledBlinkBackGround",comp.pin,false,pins,3000);
+        comp.active=true;
+        comp.status=permet;
+      }
+      if(permet==2){
+        analogWrite(comp.pin,255);
+        setColour(200,rPin,255,gPin,255,bPin);
+        score="2";
+        comp.active=true;
+        comp.status=permet;
+      }
+      if(permet>=3&&permet<=5){
+        analogWrite(comp.pin,255);
+        score="";
+        setColour(0,rPin,255,gPin,255,bPin);
+        score=permet;
+        comp.active=true;
+        comp.status=permet;
+      }
+      // blue
+      if(permet>=6&&permet<8){
+        score="";
+        score=permet;
+        comp.active=true;
+        comp.status=permet;
+        setColourCommonAn(0,rPin,0,gPin,255,bPin,comp.pin);
+      }
+      // white
+      if(permet==8){
+        score="";
+        score=permet;
+        comp.active=true;
+        comp.status=permet;
+        setColourCommonAn(255,rPin,255,gPin,255,bPin,comp.pin);
+      }
+      // go through all the colours
+      if(permet>=9){
+        score="";
+        comp.active=true;
+        comp.status=permet;
+        score=permet;
+        int pins []={rPin,gPin,bPin};
+        addTask(deviceSet.name,"rgbCycle",comp.pin,true,pins,5);
+      }
+
+      
+    }
+    deviceSet.components[i]=comp;
+  }
+  
+  return score;
+}
 // write route string
 String writeRoutesString(){
   String paramSep="|~||";
@@ -328,17 +530,123 @@ String writeRoutesString(){
   
   return routes;
 }
-// custom commands 
-int commandAction(String command){
+// return method and param
+String * returnMethodandParam(String method){
+  static String arr[2];
+  int indexA=method.indexOf(" ");
+  int indexB=method.length();
+  String m=method.substring(0,indexA);
+  Serial.println(m);
+  String p=method.substring(indexA+1,indexB);
+  Serial.println(p);
+  arr[0]=m;
+  arr[1]=p;
+  return arr;
+}
+// return boolean from string
+boolean stringToBool(String boo){
+  boolean res=false;
+  if(boo.startsWith("true")){
+    res=true;
+  }
+  return res;
+}
+// return pin from string
+uint8_t stringToPinIntDig(String pin){
+  uint8_t pinR=D0;
+  //Serial.println(pin);
+  if(pin.startsWith("D1")){
+    pinR=D1;
+  }
+  if(pin.startsWith("D2")){
+    pinR=D2;
+  }
+  if(pin.startsWith("D3")){
+    pinR=D3;
+  }
+  if(pin.startsWith("D4")){
+    pinR=D4;
+  }
+  if(pin.startsWith("D5")){
+    pinR=D5;
+  }
+  if(pin.startsWith("D6")){
+    pinR=D6;
+  }
+  if(pin.startsWith("D7")){
+    pinR=D7;
+  }
+  if(pin.startsWith("D8")){
+    pinR=D8;
+  }
+  if(pin.startsWith("D9")){
+    pinR=D9;
+  }
+  if(pin.startsWith("D10")){
+    pinR=D10;
+  }
+  Serial.println(pinR);
+  return pinR;
+}
+// return each param variable in array
+AFArray<String> parameterArray(int paramsSize,String param){
+  AFArray<String> arr;
+  String split="";
+  
+  for(int i=0; i<paramsSize; i++){
+    if(split==""){
+      int spaceIndex=param.indexOf(" ");
+      String variable=param.substring(0,spaceIndex+1);
+      Serial.println(variable);
+      arr.add(variable);
+      split=param.substring(spaceIndex+1,param.length());
+    }
+    else if(split!=""){
+      int spaceIndex=split.indexOf(" ");
+      String variable=split.substring(0,spaceIndex+1);
+      Serial.println(variable);
+      arr.add(variable);
+      split=split.substring(spaceIndex+1,split.length());
+    }
+    
+ }
+  
+  return arr;
+}
+// case of methods
+int methodCheck(String method,String param){
   int r=0;
-  if(command!="1"){
-    int indexA=command.indexOf("(");
-    int indexB=command.indexOf(")");
-    String method=command.substring(0,indexA);
-    String param=command.substring(indexA+1,indexB);
+  if(method=="setColourCommonAn"){
+    AFArray<String> paramArr=parameterArray(7,param);
+    uint8_t r=stringToPinIntDig(paramArr[1]);
+    uint8_t g=stringToPinIntDig(paramArr[3]);
+    uint8_t b=stringToPinIntDig(paramArr[5]);
+    uint8_t postive=stringToPinIntDig(paramArr[6]);
+    r=1;
+    setColourCommonAn(paramArr[0].toInt(),r,paramArr[2].toInt(),g,paramArr[4].toInt(),b,postive,255);
+    
+  }
+  // move servo custom
+  if(method=="servoMove"){
+    // get device servo
+    // get parameters and excute servo method
+    r=1;
   }
   return r;
 }
+// custom commands 
+int command(String input){
+  int r=0;
+  if(input!="1"){
+    Serial.println(input);
+    String* arr=returnMethodandParam(input);
+    String method=arr[0];
+    String para=arr[1];
+    r=methodCheck(method,para);
+  }
+  return r;
+}
+
 // set device to adjust settings
 int changeDevice(String command){
   int r=0;
@@ -434,43 +742,7 @@ int getDeviceData(String command){
   }
   return r;
 }
-// check route can be use for that device. validate command for that route if there multiple modes
-boolean validateRoute(String routeS,String param=""){
-  boolean res=false;
-  int length = sizeof(deviceSet.routesArr) / sizeof(deviceSet.routesArr[0]);
-  for(int i=0; i<length; i++){
-    route rou=deviceSet.routesArr[i];
-    if(routeS.equals(rou.routeName)){
-      // if there modes loop through to validate
-      if(rou.modes){
-        boolean end=false;
-        int modesLen=sizeof(rou.params) / sizeof(rou.params[0]);
-        for(int a=0; a<modesLen; a++){
-          String mode=rou.params[a];
-          if(param==mode){
-            break;
-          }
-          if(mode==""){
-            end =true;
-            break;
-          }
-        }
-        if(end){
-          warning="invalid param";
-          deviceSet.warning=warning;
-          break;
-        }
-      }
 
-      res=true;
-      break;
-    }
-    if(rou.routeName.equals("")){
-      break;
-    }
-  }
-  return res;
-}
 // print list of devices
 String getDevices(){
   String devices="";
@@ -554,7 +826,7 @@ void setup(void)
   rest.function("upload",uploadModeConfig);
   rest.function("query",getDeviceData);
   rest.function("changeDevice",changeDevice);
-  rest.function("command",commandAction);
+  rest.function("command",command);
   // deviceRoutes
   rest.function("randomPermet",randPermet);
   rest.function("setPermet",setPermet);
@@ -675,7 +947,7 @@ void background(){
     
     for(int i=0; i<queue.size(); i++){
       task=queue[i];
-      if(task.method=="ledBlink"){
+      if(task.method=="ledBlinkBackGround"){
         ledBlinkBackGround(task.pin,task.interval);
         queue[i]=task;
       }
@@ -696,154 +968,7 @@ void background(){
   }
 }
 
-int setMain(String command){
-  int r=0;
-  warning="";
-  if(validateRoute("setMain",command)){
-    
-  }else{
-    deviceSet.warning=="device does not have this function";
-  }
-  return r;
-}
 
-// aerial route
-int randPermet(String command){
-  warning="";
-  int r=0;
-  if(validateRoute("randPermet")){
-    if(turnOnShellRandom()){
-      int score=permetScoreRandom();
-      if(deviceSet.status!=""&&deviceSet.status!="off"){
-        score=random(deviceSet.status.toInt(),11);
-      }
-      deviceSet.status=setPermetScore(score);
-    }else{
-      setPermetScore(0);
-      deviceSet.status="off";
-    }
-    r=1;
-  }else{
-    deviceSet.warning="device does not have this function";
-  }
-  
-  deviceSet.warning=warning;
-  return r;
-}
-// aerial route
-int setPermet(String score){
-  warning="";
-  int r=0;
-  if(validateRoute("setPermet",score)){
-    if(score!=""){
-      int convertedScore=score.toInt();
-      String setPermet=setPermetScore(convertedScore);
-      deviceSet.status=setPermet;
-      deviceSet.warning=warning;
-      r=1;
-    }else{
-      warning="score entered not valid";
-      deviceSet.warning=warning;
-    }
-  }else{
-    //warning="device does not have this function";
-  }
-  return r;
-}
-
-boolean turnOnShellRandom(){
-  boolean res=false;
-  int ranDom;
-  ranDom = random(1,3);
-  if(ranDom==2){
-    res=true;
-  }
-  return res;
-}
-int permetScoreRandom(){
-  int score;
-  score=random(1,11);
-  return score;
-}
-String setPermetScore(int permet){
-  String score="";
-  // get component that has rgb pins
-  int length = sizeof(deviceSet.components) / sizeof(deviceSet.components[0]);
-  // clear any exist task
-  if(queue.size()>0){
-    removeDeviceTask(deviceSet.name);
-    Serial.println("tasks clear");
-  }
-  for(int i=0; i<length; i++){
-    component comp=deviceSet.components[i];
-    if(comp.rgb){
-      int rPin=comp.rgbPins[0],gPin=comp.rgbPins[1],bPin=comp.rgbPins[2];
-      
-      if(permet==0){
-        analogWrite(comp.pin,0);
-        setColour(255,rPin,255,gPin,255,bPin);
-        score="off";
-        comp.active=false;
-        comp.status="";
-      }
-      if(permet==1){
-        score="1";
-        int pins []={rPin,0,0};
-        setColour(100,rPin,255,gPin,255,bPin);
-        addTask(deviceSet.name,"ledBlink",comp.pin,false,pins,3000);
-        comp.active=true;
-        comp.status=permet;
-      }
-      if(permet==2){
-        analogWrite(comp.pin,255);
-        setColour(200,rPin,255,gPin,255,bPin);
-        score="2";
-        comp.active=true;
-        comp.status=permet;
-      }
-      if(permet>=3&&permet<=5){
-        analogWrite(comp.pin,255);
-        score="";
-        setColour(0,rPin,255,gPin,255,bPin);
-        score=permet;
-        comp.active=true;
-        comp.status=permet;
-      }
-      // blue
-      if(permet>=6&&permet<8){
-        analogWrite(comp.pin,255);
-        score="";
-        score=permet;
-        comp.active=true;
-        comp.status=permet;
-        setColourCommonAn(0,rPin,0,gPin,255,bPin);
-      }
-      // white
-      if(permet==8){
-        score="";
-        score=permet;
-        comp.active=true;
-        comp.status=permet;
-        analogWrite(comp.pin,255);
-        setColourCommonAn(255,rPin,255,gPin,255,bPin);
-      }
-      // go through all the colours
-      if(permet>=9){
-        score="";
-        comp.active=true;
-        comp.status=permet;
-        score=permet;
-        int pins []={rPin,gPin,bPin};
-        addTask(deviceSet.name,"rgbCycle",comp.pin,true,pins,5);
-      }
-
-      
-    }
-    deviceSet.components[i]=comp;
-  }
-  
-  return score;
-}
 
 
 
