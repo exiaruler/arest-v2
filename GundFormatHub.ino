@@ -13,6 +13,8 @@
 #include <ArduinoOTA.h>
 #include <AFArray.h>
 #include <RGBLed.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
 
 
 // Create aREST instance
@@ -30,6 +32,9 @@ WiFiServer server(LISTEN_PORT);
 // Variables to be exposed to the API
 // global variable
 String ok="OK";
+String serverURL="http://192.168.1.211:8080";
+WiFiClient client;
+HTTPClient http;
 // global operations
 boolean uploadMode;
 String device="";
@@ -82,6 +87,9 @@ void setColourCommonAn(int pinR,int pinG,int pinB,int postivePin,int R,int G,int
   analogWrite(postivePin,current);
   RGBLed led(pinR,pinG,pinB, RGBLed::COMMON_ANODE);
   led.setColor(R, G, B);
+}
+void setLed(){
+  
 }
 struct backgroundVariables{
   int x=1;
@@ -303,13 +311,49 @@ struct deviceS{
   String type="";
   String subType="";
   route routesArr[10];
+  String scheduleStart[5];
   otherStatus otStat[5];
-  String queryDataCom="routes,type,subtype,components,background";
+  String queryDataCom="routes|type|subtype|components|background";
 };
 
 // current device which is set when setting modes
 deviceS deviceSet={};
 int deviceArrIndex=0;
+
+// set status and warning and provide return
+int setUpdate(String status="",String warning=""){
+  int r=0;
+  if(status!=""&&warning==""){
+    deviceSet.status=status;
+    deviceSet.warning=warning;
+    r=1;
+  }
+  if(status!=""&&warning!=""){
+    deviceSet.status=status;
+    deviceSet.warning=warning;
+    r=1;
+  }
+  if(warning!=""&&status==""){
+    deviceSet.status="";
+    deviceSet.warning=warning;
+    r=0;
+  }
+
+  return r;
+}
+// get component 
+struct component getComponent(String name){
+  component comp={};
+  int length=sizeof(deviceSet.components) / sizeof(deviceSet.components[0]);
+  for(int i=0; i<length; i++){
+    component item=deviceSet.components[i];
+    if(item.part.equals(name)){
+      comp=item;
+      break;
+    }
+  }
+  return comp;
+}
 
 // check route can be use for that device. validate command for that route if there multiple modes
 boolean validateRoute(String routeS,String param=""){
@@ -353,9 +397,10 @@ int ledPin=D2;
 String commandSep="|~||";
 deviceS deviceArr[]={{
   "Aerial","","","","",{{"Main",D4,false,true,{},false,true},{"Shelll Unit",D8,true,false,{D1,D2,D3},false,true}},"WFM","Gundam",
-  {{"randPermet",false},
+  {{"randomPermet",false},
   {"setPermet",true,{"0","1","2","3","4","5","6","7","8","9","10"}},
-  {"setMain",true,{"On","Off"}}}
+  {"setMain",true,{"On","Off"}}},
+  {"2"}
 },
 {"Build Strike EG","","","",""}
 };
@@ -364,6 +409,8 @@ int setMain(String command){
   int r=0;
   warning="";
   if(validateRoute("setMain",command)){
+    component comp=getComponent("Main");
+
     
   }else{
     deviceSet.warning=="device does not have this function";
@@ -372,10 +419,10 @@ int setMain(String command){
 }
 
 // aerial route
-int randPermet(String command){
+int randomPermet(String command){
   warning="";
   int r=0;
-  if(validateRoute("randPermet")){
+  if(validateRoute("randomPermet")){
     if(turnOnShellRandom()){
       int score=permetScoreRandom();
       if(deviceSet.status!=""&&deviceSet.status!="off"){
@@ -549,15 +596,15 @@ String writeComponentsArray(){
       component comp=deviceSet.components[i];
       if(comp.part!=""){
         String json="{";
-        json=json+"part:"+comp.part+",";
-        json=json+"active:"+comp.active+",";
-        json=json+"status:"+comp.status+",";
+        json=json+"part:"+comp.part+"~";
+        json=json+"active:"+comp.active+"~";
+        json=json+"status:"+comp.status+"~";
         json=json+"main:"+comp.main;
         json=json+"}";
         if(array.equals("[")){
           array=array+json;
         }else{
-          array=array+","+json;
+          array=array+"|"+json;
         }
       }
     }
@@ -571,14 +618,14 @@ String writeBackgroundArray(){
         backgroundTask t=queue[i];
           if(t.device!=""){
             String json="{";
-            json=json+"device:"+t.device+",";
-            json=json+"method:"+t.method+",";
+            json=json+"device:"+t.device+"~";
+            json=json+"method:"+t.method+"~";
             json=json+"rgb:"+t.rgb;
             json=json+"}";
             if(array.equals("[")){
               array=array+json;
             }else{
-              array=array+","+json;
+              array=array+"|"+json;
             }
           }
       }
@@ -637,38 +684,6 @@ int stringToPinIntDig(String pin){
       break;
     }
   }
-  /*
-  if(pin.startsWith("D1")){
-    pinR=D1;
-  }
-  if(pin.startsWith("D2")){
-    pinR=D2;
-  }
-  if(pin.startsWith("D3")){
-    pinR=D3;
-  }
-  if(pin.startsWith("D4")){
-    pinR=D4;
-  }
-  if(pin.startsWith("D5")){
-    pinR=D5;
-  }
-  if(pin.startsWith("D6")){
-    pinR=D6;
-  }
-  if(pin.startsWith("D7")){
-    pinR=D7;
-  }
-  if(pin.startsWith("D8")){
-    pinR=D8;
-  }
-  if(pin.startsWith("D9")){
-    pinR=D9;
-  }
-  if(pin.startsWith("D10")){
-    pinR=D10;
-  }
-  */
   //Serial.println(pinR);
   return pinR;
 }
@@ -785,7 +800,7 @@ int getDeviceData(String command){
     String query;
     String data;
   };
-  
+  queryData="";
   query arr[]={
     {"routes",writeRoutesString()},
     {"type",deviceSet.type},
@@ -807,76 +822,6 @@ int getDeviceData(String command){
       break;
     }
   }
-  /*
-  // show all query commands
-  if(command.equals("1")||command.equals("")){
-    queryData=deviceSet.queryDataCom;
-    r=1;
-  }
-  if(command.equals("routes")){
-    if(deviceSet.routes.equals("")){
-      deviceSet.routes=writeRoutesString();
-    }
-    queryData=deviceSet.routes;
-    r=1;
-  }
-  if(command.equals("type")){
-    queryData=deviceSet.type;
-    r=1;
-  }
-  if(command.equals("subtype")){
-    queryData=deviceSet.subType;
-    r=1;
-    
-  }
-  if(command.equals("components")){
-    String array="[";
-    int length = sizeof(deviceSet.components) / sizeof(deviceSet.components[0]);
-    for(int i=0; i<length; i++){
-      component comp=deviceSet.components[i];
-      if(comp.part!=""){
-        String json="{";
-        json=json+"part:"+comp.part+",";
-        json=json+"active:"+comp.active+",";
-        json=json+"status:"+comp.status+",";
-        json=json+"main:"+comp.main;
-        json=json+"}";
-        if(array.equals("[")){
-          array=array+json;
-        }else{
-          array=array+","+json;
-        }
-      }
-    }
-    array=array+"]";
-    queryData=array;
-    r=1;
-  }
-  // make array of background tasks running 
-  if(command.equals("background")){
-    String array="[";
-    if(queue.size()>0){
-      for(int i=0; i<queue.size(); i++){
-        backgroundTask t=queue[i];
-          if(t.device!=""){
-            String json="{";
-            json=json+"device:"+t.device+",";
-            json=json+"method:"+t.method+",";
-            json=json+"rgb:"+t.rgb;
-            json=json+"}";
-            if(array.equals("[")){
-              array=array+json;
-            }else{
-              array=array+","+json;
-            }
-          }
-      }
-    }
-    array=array+"]";
-    queryData=array;
-    r=1;
-  }
-  */
   return r;
 }
 
@@ -927,6 +872,30 @@ void pinSetup(){
     }
   }
 }
+// send http requests when booting up
+void startRequest(){
+  int length = sizeof(deviceArr) / sizeof(deviceArr[0]);
+  String requestUrl=serverURL+"/schedule/device-startup";
+  for(int i=0; i<length; i++){
+    deviceS device=deviceArr[i];
+    int idArrLength=sizeof(device.scheduleStart) / sizeof(device.scheduleStart[0]);
+    if(idArrLength>0){
+      for(int x=0; x<idArrLength; x++){
+        String id=device.scheduleStart[x];
+        Serial.println(id);
+        if(id!=""){
+          http.begin(client,requestUrl);
+          http.addHeader("Content-Type", "application/json");
+          int httpResponseCode = http.POST("{\"api_key\":\"tPmAT5Ab3j7F9\",\"id\":\""+id+"\"}");
+          Serial.println(httpResponseCode);
+          http.end();
+        }
+      }
+    }
+    
+  }
+  
+}
 void setRestDeviceVariables(){
   device=deviceSet.name;
   warning=deviceSet.warning;
@@ -965,7 +934,7 @@ void setup(void)
   rest.function("changeDevice",changeDevice);
   rest.function("command",command);
   // deviceRoutes
-  rest.function("randomPermet",randPermet);
+  rest.function("randomPermet",randomPermet);
   rest.function("setPermet",setPermet);
   //randPermet
 
@@ -1039,6 +1008,8 @@ void setup(void)
 
   // Print the IP address
   Serial.println(WiFi.localIP());
+  startRequest();
+  
 }
 
 void loop() {
