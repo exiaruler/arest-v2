@@ -790,6 +790,8 @@ int changeDevice(String command){
         break;
       }
     }
+  }else if(deviceSet.name==command){
+    r=1;
   }
   return r;
 }
